@@ -6,6 +6,8 @@
 
 Most deobfuscators fail when `stringArrayEncoding` is set to `rc4` or `base64` because they try to reverse the encoding statically. Revelio doesn't reverse it — it **executes the original decoder in a sandboxed VM** and lets the obfuscator undo its own work.
 
+> **Note:** This project is not actively maintained. It was built for a specific use case and is public only in the hope that it may help others.
+
 ---
 
 ## Before / After
