@@ -1,5 +1,5 @@
 {
-  "name": "js-deobfuscator",
+  "name": "revelio",
   "version": "1.0.0",
   "description": "AST-based deobfuscator for javascript-obfuscator output (RC4/base64 string encoding)",
   "type": "module",
