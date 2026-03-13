@@ -83,19 +83,44 @@ Renames `_0x...` identifiers to human-readable names inferred from context.
 
 ## Supported Patterns
 
+**String Encoding**
 - ✅ String array with rotation (including inside SequenceExpressions)
 - ✅ RC4 and base64 string encoding
 - ✅ Decoder functions and nested wrappers (multiple levels)
-- ✅ Decoder aliases (`const _h = decoder`) resolved transitively across all scopes
-- ✅ Proxy / delegate objects (literals and functions)
+- ✅ Decoder aliases resolved transitively across all scopes
+- ❌ Multiple string arrays per file
+- ❌ Split strings (`'hel' + 'lo'` concatenation of literals)
+
+**Control Flow**
 - ✅ Dead code insertion (always-true/false conditionals)
-- ✅ Comma expressions
-- ✅ Numeric flow control objects
-- ✅ Proxy object aliases
+- ✅ Unreachable code removal (after return/throw)
+- ❌ Control flow flattening (switch-case dispatch tables)
+
+**Literals & Expressions**
 - ✅ Boolean coercion (`!0` → `true`, `!1` → `false`, `!![]` → `true`)
+- ✅ Constant arithmetic folding
 - ✅ Hex literals → decimal (`0x1f4` → `500`)
 - ✅ `void 0` → `undefined`
+- ❌ Numbers to expressions (`-~[] * ~-[]` → number)
+- ❌ Unicode escape sequences (`\u0068\u0065\u006c\u006c\u006f` → `hello`)
+
+**Objects & Properties**
+- ✅ Proxy / delegate objects (literals and functions)
 - ✅ Bracket notation cleanup (`obj["foo"]` → `obj.foo`, `["method"]()` → `method()`)
+- ✅ Comma expressions split into statements
+- ✅ Dead numeric objects and proxy declarations removed
+- ❌ Transform object keys (computed property name obfuscation)
+
+**Variable Renaming**
+- ✅ Context-inferred names (DOM APIs, constructors, fetch/json, callbacks)
+- ✅ Sequential fallback (`_a`, `_b`, `_c`)
+- ❌ Property renaming
+- ❌ Global variable renaming
+
+**Anti-Tampering**
+- ❌ Self-defending (anti-formatting detection)
+- ❌ Debug protection (`debugger` traps)
+- ❌ Domain lock
 
 ---
 
