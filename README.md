@@ -143,7 +143,7 @@ node deobfuscate.mjs /path/to/obfuscated.js
 | [acorn](https://github.com/acornjs/acorn) | JavaScript parser → AST |
 | [acorn-walk](https://github.com/acornjs/acorn/tree/master/acorn-walk) | AST traversal |
 | [escodegen](https://github.com/estools/escodegen) | AST → clean JavaScript |
-| [astring](https://github.com/nicolo-ribaudo/astring) | Fallback code generator for ES2022+ syntax (private fields, class properties) |
+| [astring](https://github.com/davidbonnet/astring) | Fallback code generator for ES2022+ syntax (private fields, class properties) |
 
 ---
 
