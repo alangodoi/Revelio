@@ -10,6 +10,7 @@
   "dependencies": {
     "acorn": "^8.16.0",
     "acorn-walk": "^8.3.5",
+    "astring": "^1.9.0",
     "escodegen": "^2.1.0"
   }
 }

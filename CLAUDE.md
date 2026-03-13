@@ -28,7 +28,7 @@ Single-file tool (`deobfuscate.mjs`, ~1300 lines) that operates in 3 sequential 
 
 **Phase 3 — Variable Renaming:** Renames `_0x...` identifiers using context inference (DOM APIs, constructors, `fetch`/`json` patterns, callback params) with fallback to sequential `_a`, `_b`, `_c`.
 
-All AST manipulation uses acorn (parse), acorn-walk (traverse), and escodegen (generate). The tool parses once, mutates the AST in-place across phases, and generates output once at the end.
+All AST manipulation uses acorn (parse), acorn-walk (traverse), and escodegen (generate, with astring as fallback for ES2022+ syntax). The tool parses once, mutates the AST in-place across phases, and generates output once at the end.
 
 ## Key Files
 

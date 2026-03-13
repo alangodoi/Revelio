@@ -4,15 +4,39 @@
  * nested wrappers, and inline object property references.
  */
 
-import { readFileSync, writeFileSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, readdirSync } from 'fs';
+import path from 'path';
 import * as acorn from 'acorn';
 import * as walk from 'acorn-walk';
 import * as escodegen from 'escodegen';
+import { generate as astringGenerate } from 'astring';
 import vm from 'vm';
 
-const inputFile = process.argv[2];
+let inputFile = process.argv[2];
 if (!inputFile) {
   console.error('Usage: node deobfuscate.mjs <file.js>');
+  process.exit(1);
+}
+
+if (!existsSync(inputFile) && !inputFile.endsWith('.js') && existsSync(inputFile + '.js')) {
+  inputFile = inputFile + '.js';
+}
+
+if (!existsSync(inputFile)) {
+  console.error(`Error: file not found: ${inputFile}`);
+  const dir = path.dirname(inputFile);
+  const base = path.basename(inputFile);
+  try {
+    const stem = base.replace(/\.js$/, '');
+    const files = readdirSync(dir).filter(f => f.endsWith('.js') && !f.endsWith('.deobf.js'));
+    let matches = files.filter(f => f.startsWith(stem));
+    if (matches.length === 0) {
+      // Fuzzy: find files that share a common prefix (drop trailing digits/underscores)
+      const prefix = stem.replace(/[_\d]+$/, '');
+      if (prefix) matches = files.filter(f => f.startsWith(prefix));
+    }
+    if (matches.length > 0) console.error(`Did you mean: ${matches.map(f => path.join(dir, f)).join(', ')}?`);
+  } catch {}
   process.exit(1);
 }
 
@@ -47,13 +71,39 @@ for (const node of ast.body) {
 }
 
 let rotationNode = null;
+
+// Check if a CallExpression is the rotation IIFE
+function isRotationCall(callExpr) {
+  const src = code.slice(callExpr.start, callExpr.end);
+  // Classic: contains literal push/shift/parseInt
+  if (src.includes('push') && src.includes('shift') && src.includes('parseInt')) return true;
+  // Obfuscated: IIFE that takes the string array function as first arg and a number as second
+  if (callExpr.callee && callExpr.callee.type === 'FunctionExpression' &&
+      callExpr.arguments && callExpr.arguments.length === 2 &&
+      callExpr.arguments[0].type === 'Identifier' && callExpr.arguments[0].name === stringArrayFuncName &&
+      callExpr.arguments[1].type === 'Literal' && typeof callExpr.arguments[1].value === 'number' &&
+      src.includes('parseInt')) return true;
+  return false;
+}
+
 for (const node of ast.body) {
-  if (node.type === 'ExpressionStatement' && node.expression.type === 'CallExpression') {
-    const src = code.slice(node.start, node.end);
-    if (src.includes('push') && src.includes('shift') && src.includes('parseInt')) {
-      rotationNode = node;
-      break;
+  if (node.type !== 'ExpressionStatement') continue;
+  const expr = node.expression;
+  // Direct IIFE call
+  if (expr.type === 'CallExpression' && isRotationCall(expr)) {
+    rotationNode = node;
+    break;
+  }
+  // SequenceExpression: rotation IIFE joined with other code via comma operator
+  if (expr.type === 'SequenceExpression') {
+    for (const sub of expr.expressions) {
+      if (sub.type === 'CallExpression' && isRotationCall(sub)) {
+        // Extract just the rotation call as its own expression statement
+        rotationNode = { type: 'ExpressionStatement', expression: sub, start: sub.start, end: sub.end, _fromSequence: true };
+        break;
+      }
     }
+    if (rotationNode) break;
   }
 }
 
@@ -78,7 +128,12 @@ if (!stringArrayFuncNode) {
 
 const infraParts = [];
 if (stringArrayFuncNode) infraParts.push(code.slice(stringArrayFuncNode.start, stringArrayFuncNode.end));
-if (rotationNode) infraParts.push(code.slice(rotationNode.start, rotationNode.end));
+if (rotationNode) {
+  let rotSrc = code.slice(rotationNode.start, rotationNode.end);
+  // Ensure IIFE is wrapped in parens if extracted from a SequenceExpression
+  if (/^function\s*\(/.test(rotSrc)) rotSrc = '(' + rotSrc + ')';
+  infraParts.push(rotSrc);
+}
 for (const [, node] of Object.entries(decoderFuncs)) {
   infraParts.push(code.slice(node.start, node.end));
 }
@@ -276,6 +331,43 @@ while (foundNew && pass < 20) {
 }
 
 console.log(`Found ${wrapperFuncs.size} wrapper functions (${pass} passes)`);
+
+// ---- Step 4b: Find decoder aliases ----
+// Obfuscators create local const/var aliases: const _0xABC = _0x4ef1 (or chained through other aliases)
+// These must be treated as direct decoder calls.
+
+const decoderAliases = new Map(); // alias name -> original decoder name
+let aliasPass = 0;
+let foundNewAlias = true;
+while (foundNewAlias && aliasPass < 20) {
+  foundNewAlias = false;
+  aliasPass++;
+  walk.simple(ast, {
+    VariableDeclarator(node) {
+      if (!node.id || node.id.type !== 'Identifier') return;
+      if (!node.init || node.init.type !== 'Identifier') return;
+      if (decoderAliases.has(node.id.name)) return;
+      const target = node.init.name;
+      if (decoderNames.has(target)) {
+        decoderAliases.set(node.id.name, target);
+        foundNewAlias = true;
+      } else if (decoderAliases.has(target)) {
+        decoderAliases.set(node.id.name, decoderAliases.get(target));
+        foundNewAlias = true;
+      }
+    }
+  });
+}
+
+// Register aliases in the VM so they can be called directly
+for (const [alias, original] of decoderAliases) {
+  try {
+    vm.runInContext(`var ${alias} = ${original};`, vmContext, { timeout: 500 });
+    decoderNames.add(alias);
+  } catch {}
+}
+
+console.log(`Found ${decoderAliases.size} decoder aliases (${aliasPass} passes)`);
 
 // ---- Step 5: Resolve a call to a wrapper/decoder ----
 
@@ -550,11 +642,28 @@ for (const node of ast.body) {
   }
 }
 
+// Also mark decoder aliases as dead
+for (const alias of decoderAliases.keys()) deadNames.add(alias);
+
 ast.body = ast.body.filter(node => {
   if (node === rotationNode) return false;
   if (node.type === 'FunctionDeclaration' && node.id && deadNames.has(node.id.name)) return false;
   return true;
 });
+
+// Remove rotation call from SequenceExpression if it was inside one
+if (rotationNode && rotationNode._fromSequence) {
+  for (const node of ast.body) {
+    if (node.type !== 'ExpressionStatement' || node.expression.type !== 'SequenceExpression') continue;
+    const exprs = node.expression.expressions;
+    const idx = exprs.findIndex(e => e.start === rotationNode.start && e.end === rotationNode.end);
+    if (idx !== -1) {
+      exprs.splice(idx, 1);
+      if (exprs.length === 1) node.expression = exprs[0];
+      break;
+    }
+  }
+}
 
 // Remove nested wrapper functions and their associated const objects from function bodies
 const wrapperNames = new Set(wrapperFuncs.keys());
@@ -575,6 +684,8 @@ function cleanBlockBody(body) {
     if (stmt.type === 'VariableDeclaration') {
       stmt.declarations = stmt.declarations.filter(decl => {
         if (!decl.id || decl.id.type !== 'Identifier') return true;
+        // Remove decoder alias declarations (const _h = _d)
+        if (deadNames.has(decl.id.name)) { removedNested++; return false; }
         if (!decl.init || decl.init.type !== 'ObjectExpression') return true;
         // Check if ALL properties are simple numeric/string literals (wrapper arg objects)
         const props = decl.init.properties;
@@ -817,6 +928,8 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
       if (arg.type === 'ArrayExpression' && arg.elements.length === 0) {
         val = false;
       } else if (arg.type === 'Literal' && typeof arg.value === 'boolean') {
+        val = !arg.value;
+      } else if (arg.type === 'Literal' && typeof arg.value === 'number') {
         val = !arg.value;
       }
       if (val !== undefined) {
@@ -1328,6 +1441,72 @@ console.log(`  Comma expressions split: ${totalCommasSplit}`);
 console.log(`  Dead numeric objects removed: ${totalDeadObjects}`);
 console.log(`  Unused proxy declarations removed: ${totalProxyDeclsRemoved} (${totalDeadProxies} dead proxies)`);
 
+// --- Post-convergence cleanup passes ---
+
+// Hex numeric literals → decimal
+let hexConverted = 0;
+walk.simple(ast, {
+  Literal(node) {
+    if (typeof node.value === 'number' && node.raw && /^0x/i.test(node.raw)) {
+      node.raw = String(node.value);
+      hexConverted++;
+    }
+  }
+});
+if (hexConverted) console.log(`  Hex literals converted to decimal: ${hexConverted}`);
+
+// void 0 → undefined
+let voidConverted = 0;
+walk.simple(ast, {
+  UnaryExpression(node) {
+    if (node.operator === 'void' && node.argument && node.argument.type === 'Literal' && node.argument.value === 0) {
+      node.type = 'Identifier';
+      node.name = 'undefined';
+      delete node.operator;
+      delete node.argument;
+      delete node.prefix;
+      voidConverted++;
+    }
+  }
+});
+if (voidConverted) console.log(`  void 0 → undefined: ${voidConverted}`);
+
+// Bracket notation on class members: ["debug"]() → debug(), ["isCapped"] = ... → isCapped = ...
+let bracketToIdent = 0;
+walk.simple(ast, {
+  MethodDefinition(node) {
+    if (node.computed && node.key && node.key.type === 'Literal' &&
+        typeof node.key.value === 'string' && /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(node.key.value)) {
+      node.computed = false;
+      node.key = { type: 'Identifier', name: node.key.value };
+      bracketToIdent++;
+    }
+  },
+  PropertyDefinition(node) {
+    if (node.computed && node.key && node.key.type === 'Literal' &&
+        typeof node.key.value === 'string' && /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(node.key.value)) {
+      node.computed = false;
+      node.key = { type: 'Identifier', name: node.key.value };
+      bracketToIdent++;
+    }
+  }
+});
+if (bracketToIdent) console.log(`  Class bracket notation → identifier: ${bracketToIdent}`);
+
+// Bracket MemberExpression with string literal keys: obj["foo"] → obj.foo
+let memberBracket = 0;
+walk.simple(ast, {
+  MemberExpression(node) {
+    if (node.computed && node.property && node.property.type === 'Literal' &&
+        typeof node.property.value === 'string' && /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(node.property.value)) {
+      node.computed = false;
+      node.property = { type: 'Identifier', name: node.property.value };
+      memberBracket++;
+    }
+  }
+});
+if (memberBracket) console.log(`  Bracket member access → dot notation: ${memberBracket}`);
+
 console.log('\n=== Phase 2 Complete ===');
 
 // ======== Phase 3: Variable Renaming ========
@@ -1612,14 +1791,20 @@ console.log(`  Sequential names: ${seqCount}`);
 console.log(`  Total identifiers renamed: ${renameCount}`);
 console.log('\n=== Phase 3 Complete ===');
 
-// Generate output
-const output = escodegen.generate(ast, {
-  format: {
-    indent: { style: '  ' },
-    quotes: 'single',
-    semicolons: true
-  }
-});
+// Generate output — prefer escodegen, fall back to astring for ES2022+ features it doesn't support
+let output;
+try {
+  output = escodegen.generate(ast, {
+    format: {
+      indent: { style: '  ' },
+      quotes: 'single',
+      semicolons: true
+    }
+  });
+} catch {
+  console.log('escodegen failed (likely ES2022+ syntax), falling back to astring');
+  output = astringGenerate(ast, { indent: '  ' });
+}
 
 const outputFile = inputFile.replace('.js', '.deobf.js');
 writeFileSync(outputFile, output);
