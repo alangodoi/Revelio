@@ -83,14 +83,19 @@ Renames `_0x...` identifiers to human-readable names inferred from context.
 
 ## Supported Patterns
 
-- ✅ String array with rotation
+- ✅ String array with rotation (including inside SequenceExpressions)
 - ✅ RC4 and base64 string encoding
 - ✅ Decoder functions and nested wrappers (multiple levels)
+- ✅ Decoder aliases (`const _h = decoder`) resolved transitively across all scopes
 - ✅ Proxy / delegate objects (literals and functions)
 - ✅ Dead code insertion (always-true/false conditionals)
 - ✅ Comma expressions
 - ✅ Numeric flow control objects
 - ✅ Proxy object aliases
+- ✅ Boolean coercion (`!0` → `true`, `!1` → `false`, `!![]` → `true`)
+- ✅ Hex literals → decimal (`0x1f4` → `500`)
+- ✅ `void 0` → `undefined`
+- ✅ Bracket notation cleanup (`obj["foo"]` → `obj.foo`, `["method"]()` → `method()`)
 
 ---
 
@@ -138,6 +143,7 @@ node deobfuscate.mjs /path/to/obfuscated.js
 | [acorn](https://github.com/acornjs/acorn) | JavaScript parser → AST |
 | [acorn-walk](https://github.com/acornjs/acorn/tree/master/acorn-walk) | AST traversal |
 | [escodegen](https://github.com/estools/escodegen) | AST → clean JavaScript |
+| [astring](https://github.com/nicolo-ribaudo/astring) | Fallback code generator for ES2022+ syntax (private fields, class properties) |
 
 ---
 
