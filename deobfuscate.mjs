@@ -72,12 +72,21 @@ console.log(`Decoders: ${Object.keys(decoderFuncs).join(', ')}`);
 
 // ---- Step 2: Execute infrastructure in VM ----
 
+if (!stringArrayFuncNode) {
+  console.log('No string array infrastructure found — skipping Phase 1 (string decoding).');
+}
+
 const infraParts = [];
-infraParts.push(code.slice(stringArrayFuncNode.start, stringArrayFuncNode.end));
+if (stringArrayFuncNode) infraParts.push(code.slice(stringArrayFuncNode.start, stringArrayFuncNode.end));
 if (rotationNode) infraParts.push(code.slice(rotationNode.start, rotationNode.end));
 for (const [, node] of Object.entries(decoderFuncs)) {
   infraParts.push(code.slice(node.start, node.end));
 }
+
+let decoderNames;
+let wrapperFuncs;
+
+if (stringArrayFuncNode) {
 
 const vmContext = vm.createContext({
   console, parseInt, String, decodeURIComponent,
@@ -89,7 +98,7 @@ const vmContext = vm.createContext({
 vm.runInContext(infraParts.join('\n'), vmContext, { timeout: 15000 });
 console.log('VM ready');
 
-const decoderNames = new Set(Object.keys(decoderFuncs));
+decoderNames = new Set(Object.keys(decoderFuncs));
 
 // ---- Step 3: Collect ALL const object literals throughout the AST ----
 // Maps variable name -> { prop: value } for simple numeric/string const objects
@@ -178,7 +187,7 @@ console.log(`Collected ${constObjects.size} const objects`);
 // A wrapper is: function with N params, body has optional const decls + return decoderCall(...)
 // The return call arguments may reference the function params, local consts, or parent scope consts
 
-const wrapperFuncs = new Map();
+wrapperFuncs = new Map();
 
 function analyzeWrapper(funcNode) {
   if (!funcNode.id || funcNode.params.length < 2) return null;
@@ -612,6 +621,12 @@ walk.simple(ast, {
 });
 
 console.log(`Removed ${removedNested} nested dead nodes`);
+
+} else {
+  // No string array infrastructure — skip Phase 1
+  decoderNames = new Set();
+  wrapperFuncs = new Map();
+}
 
 // ======== Phase 2: Structural Cleanup (iterative convergence) ========
 console.log('\n=== Phase 2: Structural Cleanup ===');
