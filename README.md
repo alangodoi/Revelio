@@ -2,7 +2,7 @@
 
 > *"Revelio" — the revealing charm. Because obfuscated code should have nowhere to hide.*
 
-**The only deobfuscator that achieves 100% string recovery on `javascript-obfuscator` output — including RC4-encoded string arrays.**
+**AST-based deobfuscator with high string recovery rates on `javascript-obfuscator` output — including RC4-encoded string arrays.**
 
 Most deobfuscators fail when `stringArrayEncoding` is set to `rc4` or `base64` because they try to reverse the encoding statically. Revelio doesn't reverse it — it **executes the original decoder in a sandboxed VM** and lets the obfuscator undo its own work.
 
